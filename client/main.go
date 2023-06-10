@@ -2,10 +2,14 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
+	"log"
+	"net/http"
 	"os"
 	"strings"
+	"team01/node"
 )
 
 const (
@@ -17,6 +21,12 @@ const (
 type Command struct {
 	Action string
 	Args   []string
+}
+
+type Client struct {
+	host         string
+	port         string
+	currentSwarm *node.Swarm
 }
 
 func getCommand() (isInputCorrect, stopReading bool, command *Command) {
@@ -85,9 +95,52 @@ func getCommand() (isInputCorrect, stopReading bool, command *Command) {
 	return
 }
 
+func getUrl() (urlS string) {
+
+	return urlS
+}
+
+func (c Client) printKnownNodes(swarm node.Swarm) {
+	fmt.Println("Connected to a database of Warehouse 13 at ", c.host, ":", c.port)
+	fmt.Println("Known nodes:")
+	for _, val := range swarm.Nodes {
+		fmt.Println(val.Host, ":", val.Port)
+	}
+}
+
+func (c Client) Get(urlS string) (swarm node.Swarm, err error) {
+	client := &http.Client{}
+
+	resp, err := client.Get("https://" + c.host + ":" + c.port + "/getSwarm")
+	if err != nil {
+		fmt.Println("Error from Get method: ", err)
+		return swarm, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Println("Error from Get method: ", err)
+		return swarm, err
+	}
+	json.Unmarshal(body, &swarm)
+	return swarm, nil
+}
+
 func main() {
 
 	// parse args and connect to node
+
+	// create a new client
+	client := Client{}
+
+	urlS := getUrl() //string - "https://127.0.0.1:8765/getSwarm"
+
+	//first connect to server - getting info about servers of Swarm
+	swarmInfo, err := client.Get(urlS)
+	if err != nil {
+		log.Fatal()
+	}
+	client.printKnownNodes(swarmInfo)
 
 	// goroutine that receives heartbeats and changes nodes
 
