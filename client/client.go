@@ -20,9 +20,10 @@ import (
 )
 
 const (
-	get = "GET"
-	set = "SET"
-	del = "DELETE"
+	get       = "GET"
+	set       = "SET"
+	del       = "DELETE"
+	timeoutHB = 5
 )
 
 type Command struct {
@@ -113,7 +114,6 @@ func getCommand() (isInputCorrect, stopReading bool, command *Command) {
 }
 
 func (c Client) printKnownNodes() {
-	fmt.Printf("Connected to a database of Warehouse 13 at %s:%s\n", c.host, c.port)
 	fmt.Println("Known nodes:")
 	c.Mu.Lock()
 	nodes := c.currentSwarm.Nodes
@@ -139,6 +139,38 @@ func (c Client) getServer() (swarm node.Swarm, err error) {
 	}
 	json.Unmarshal(body, &swarm)
 	return swarm, nil
+}
+
+func (c *Client) getHeartBeat() error {
+	swarmInfo, err := c.getServer()
+	if err != nil {
+		c.Mu.Lock()
+		currentNodes := c.currentSwarm.Nodes
+		c.Mu.Unlock()
+		for _, val := range currentNodes {
+			arr := strings.Split(val.Addr, ":")
+			cNew := Client{host: arr[0], port: arr[1]}
+			swarmInfo, err = cNew.getServer()
+			//fmt.Println(swarmInfo)
+			if err == nil {
+				cNew.currentSwarm = &swarmInfo
+				c.Mu.Lock()
+				c.host = cNew.host
+				c.port = cNew.port
+				c.currentSwarm = &swarmInfo
+				//fmt.Println(swarmInfo)
+				c.Mu.Unlock()
+				fmt.Printf("Reconnected to a database of Warehouse 13 at %s:%s\n", c.host, c.port)
+				c.printKnownNodes()
+				return nil
+			}
+		}
+		return err
+	}
+	c.Mu.Lock()
+	c.currentSwarm = &swarmInfo
+	c.Mu.Unlock()
+	return nil
 }
 
 func (c Client) setRecord() error {
@@ -184,25 +216,55 @@ func (c Client) setRecord() error {
 	return nil
 }
 
-func (c Client) getHeartBeat() error {
-	swarmInfo, err := c.getServer()
-	if err != nil {
-		log.Println("Error on server: ", err)
-		return err
-	}
-	c.currentSwarm = &swarmInfo
-	addr := fmt.Sprintf("%s:%s", c.host, c.port)
-	if _, ok := swarmInfo.Nodes[addr]; !ok {
-		for _, val := range swarmInfo.Nodes {
-			arr := strings.Split(val.Addr, ":")
-			c.host = arr[0]
-			c.port = arr[1]
-			break
+func (c Client) delRecord() {
+	//var statusCode int
+	//var value node.Record
+	count := 0
+	c.Mu.Lock()
+	nodes := c.currentSwarm.Nodes
+	c.Mu.Unlock()
+	for _, server := range nodes {
+		body, err := json.Marshal(c.currentCommand)
+		if err != nil {
+			log.Println(err)
+			return
 		}
-		fmt.Printf("Reconnected to a database of Warehouse 13 at %s:%s\n", c.host, c.port)
-		c.printKnownNodes()
+		bodyReader := bytes.NewReader(body)
+		if c.delRequest(server.Addr, bodyReader) {
+			count++
+		}
 	}
-	return nil
+	if count == 0 {
+		fmt.Printf("Error: not found")
+	} else {
+		fmt.Printf("Deleted (%d replicas)\n", count)
+	}
+	return
+}
+
+func (c Client) delRequest(addr string, body *bytes.Reader) bool {
+	client := &http.Client{}
+	req, err := http.NewRequest(get, "http://"+addr+"/findRecord", body)
+	if err != nil {
+		log.Println("Error: ", err)
+		return false
+	}
+	req.Header.Add("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	defer resp.Body.Close()
+	if err != nil {
+		fmt.Println("Request wasn't send: ", err)
+		return false
+	}
+	if resp.StatusCode == 200 {
+		_, err := http.NewRequest(get, "http://"+addr+"/delRecord", body)
+		if err != nil {
+			log.Println("Error: ", err)
+			return false
+		}
+		return true
+	}
+	return false
 }
 
 func (c Client) getRecord() (statusCode int, value node.Record) {
@@ -302,6 +364,8 @@ func main() {
 	swarmInfo, err := client.getServer()
 	if err != nil {
 		log.Fatalln("Error on server")
+	} else {
+		fmt.Printf("Connected to a database of Warehouse 13 at %s:%s\n", client.host, client.port)
 	}
 	client.currentSwarm = &swarmInfo
 	client.printKnownNodes()
@@ -309,8 +373,8 @@ func main() {
 	wg := new(sync.WaitGroup)
 	wg.Add(1)
 	// goroutine that receives heartbeats and changes nodes
-	go func(wg *sync.WaitGroup) {
-		ticker := time.Tick(time.Second)
+	go func(wg *sync.WaitGroup, client *Client) {
+		ticker := time.Tick(time.Second * timeoutHB)
 		for {
 			//log.Println("Отправка heartbeat сигнала нодам")
 			<-ticker
@@ -320,7 +384,7 @@ func main() {
 			}
 		}
 		wg.Done()
-	}(wg)
+	}(wg, &client)
 
 	// command execution loop
 	for {
@@ -353,6 +417,7 @@ func main() {
 					continue
 				}
 			case del:
+				client.delRecord()
 				log.Println("Delete request")
 				//delete
 			default:
