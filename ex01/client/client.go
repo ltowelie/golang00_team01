@@ -112,7 +112,6 @@ func getCommand() (isInputCorrect, stopReading bool, command *Command) {
 }
 
 func (c Client) printKnownNodes() {
-	fmt.Printf("Connected to a database of Warehouse 13 at %s:%s\n", c.host, c.port)
 	fmt.Println("Known nodes:")
 	c.Mu.Lock()
 	nodes := c.currentSwarm.Nodes
@@ -326,6 +325,51 @@ func isUUID4(str string) bool {
 	return true
 }
 
+func (c Client) delRecord() {
+	count := 0
+	c.Mu.Lock()
+	nodes := c.currentSwarm.Nodes
+	c.Mu.Unlock()
+	for _, server := range nodes {
+		body, err := json.Marshal(c.currentCommand)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		bodyReader := bytes.NewReader(body)
+		req, err := http.NewRequest(get, "http://"+server.Addr+"/getRecord", bodyReader)
+		if err != nil {
+			log.Println("Error: ", err)
+			return
+		}
+		client := &http.Client{}
+		req.Header.Add("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			fmt.Println("Request wasn't send: ", err)
+			return
+		}
+		if resp.StatusCode == 200 {
+			bodyReader = bytes.NewReader(body)
+			req, err = http.NewRequest(get, "http://"+server.Addr+"/delRecord", bodyReader)
+			if err != nil {
+				log.Println("Error: ", err)
+				return
+			}
+			client := &http.Client{}
+			req.Header.Add("Content-Type", "application/json")
+			client.Do(req)
+			count++
+		}
+	}
+	if count == 0 {
+		fmt.Println("Error: not found")
+	} else {
+		fmt.Printf("Deleted (%d replicas)\n", count)
+	}
+	return
+}
+
 func main() {
 	// create a new client
 	client := newClient()
@@ -334,6 +378,8 @@ func main() {
 	swarmInfo, err := client.getServer()
 	if err != nil {
 		log.Fatalln("Error on server")
+	} else {
+		fmt.Printf("Connected to a database of Warehouse 13 at %s:%s\n", client.host, client.port)
 	}
 	client.currentSwarm = &swarmInfo
 	client.printKnownNodes()
@@ -381,6 +427,7 @@ func main() {
 					continue
 				}
 			case del:
+				client.delRecord()
 				// log.Println("Delete request")
 				//delete
 			default:
