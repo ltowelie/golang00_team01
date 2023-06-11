@@ -24,9 +24,9 @@ func nodeFromArgs() (*node.Node, string, string, int) {
 	optional := " (optional - if you want to connect to existing swarm, but using EH+EP flags is required)"
 	replicationFactorUsageStr := "replication factor"
 
-	flag.StringVar(&host, "H", "", hostUsageStr)
+	flag.StringVar(&host, "H", "127.0.0.1", hostUsageStr)
 	flag.StringVar(&port, "P", "", portUsageStr)
-	flag.IntVar(&replicationFactor, "replication_factor", 2, replicationFactorUsageStr)
+	flag.IntVar(&replicationFactor, "RF", 2, replicationFactorUsageStr)
 	flag.StringVar(&existNodeHost, "EH", "", hostUsageStr+optional)
 	flag.StringVar(&existNodePort, "EP", "", portUsageStr+optional)
 	flag.Parse()
