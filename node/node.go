@@ -12,6 +12,11 @@ import (
 	"time"
 )
 
+type Command struct {
+	Action string
+	Args   []string
+}
+
 type Node struct {
 	Addr         string             `json:"address"`
 	RecordsCount int                `json:"records_count"`
@@ -32,10 +37,10 @@ type Record struct {
 	Value string `json:"value"`
 }
 
-func (s *Swarm) SendHeartbeatToAllNodes() error {
+func (s *Swarm) SendHeartbeatToAllNodes() {
 
 	wg := new(sync.WaitGroup)
-
+	s.Mu.Lock()
 	for _, node := range s.Nodes {
 
 		if s.ThisNode == node {
@@ -47,11 +52,11 @@ func (s *Swarm) SendHeartbeatToAllNodes() error {
 			s.ThisNode.SendHeartBeat(node.Addr)
 		}(s, node, wg)
 	}
+	s.Mu.Unlock()
 	wg.Wait()
-	return nil
 }
 
-func (n Node) SendHeartBeat(addr string) {
+func (n *Node) SendHeartBeat(addr string) *Swarm {
 
 	client := &http.Client{}
 
@@ -63,56 +68,25 @@ func (n Node) SendHeartBeat(addr string) {
 
 	req, err := http.NewRequest(http.MethodPost, "http://"+addr+"/heartBeat", bodyReader)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error create request: %s\n", err)
+		fmt.Fprintf(os.Stderr, "error create heartbeat to %s: %s\n", addr, err)
 	}
 	req.Header.Add("Content-Type", "application/json")
 
 	res, err := client.Do(req)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error send request: %s\n", err)
-	}
-
-	if res != nil {
-		defer func(Body io.ReadCloser) {
-			err = Body.Close()
-			if err != nil {
-
-			}
-		}(res.Body)
-	}
-
-}
-
-func (n Node) SendGetServer(addr string) *Swarm {
-
-	client := &http.Client{}
-
-	jsonBody, err := json.Marshal(n)
-	if err != nil {
-		log.Fatal(err)
-	}
-	bodyReader := bytes.NewReader(jsonBody)
-
-	req, err := http.NewRequest(http.MethodPost, "http://"+addr+"/getServer", bodyReader)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error create request: %s\n", err)
-	}
-	req.Header.Add("Content-Type", "application/json")
-
-	res, err := client.Do(req)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error send request: %s\n", err)
+		fmt.Fprintf(os.Stderr, "error send heartbeat to %s: %s\n", addr, err)
+		return nil
 	}
 
 	var swarm Swarm
 
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error reading request body: %s\n", err)
+		fmt.Fprintf(os.Stderr, "error reading getServer request body from %s: %s\n", addr, err)
 	}
 	err = json.Unmarshal(body, &swarm)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error unmarshalling swarm: %s\n", err)
+		fmt.Fprintf(os.Stderr, "error unmarshalling swarm struct in getServer request from %s: %s\n", addr, err)
 	}
 
 	defer func(Body io.ReadCloser) {
@@ -122,77 +96,180 @@ func (n Node) SendGetServer(addr string) *Swarm {
 		}
 	}(res.Body)
 	return &swarm
-}
-
-func (s *Swarm) HandleGetServer(w http.ResponseWriter, r *http.Request) {
-
-	w.Header().Set("Content-Type", "application/json")
-	err := json.NewEncoder(w).Encode(s)
-	if err != nil {
-		_, err = fmt.Fprintf(os.Stderr, "error encoding swarm in get server: %s\n", err)
-	}
-
-	var elem *Node
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		_, err = fmt.Fprintf(os.Stderr, "error reading request body: %s\n", err)
-		if err != nil {
-			log.Printf("%s\n", err)
-		}
-	}
-	err = json.Unmarshal(body, &elem)
-	if err != nil {
-		_, err = fmt.Fprintf(os.Stderr, "error unmarshalling heartbeat signal node: %s\n", err)
-		if err != nil {
-			log.Printf("%s\n", err)
-		}
-	}
-
-	log.Printf("Got get server signal from %s\n", elem.Addr)
-
-	s.Mu.Lock()
-	s.Nodes[elem.Addr] = elem
-	s.Nodes[elem.Addr].HeartBeat = time.Now()
-	s.Mu.Unlock()
 
 }
 
 func (s *Swarm) HandleHeartBeat(w http.ResponseWriter, r *http.Request) {
-	var elem *Node
 
-	_ = w
+	w.Header().Set("Content-Type", "application/json")
+	err := json.NewEncoder(w).Encode(s)
+	if err != nil {
+		_, err = fmt.Fprintf(os.Stderr, "error encoding swarm in heartbeat: %s\n", err)
+	}
+
+	switch r.URL.Path {
+	case "/heartBeat":
+		var node *Node
+
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			_, err = fmt.Fprintf(os.Stderr, "error reading request body: %s\n", err)
+			if err != nil {
+				log.Printf("%s\n", err)
+			}
+		}
+		err = json.Unmarshal(body, &node)
+
+		log.Printf("Got heartbeat signal from %s\n", node.Addr)
+
+		if err != nil {
+			_, err = fmt.Fprintf(os.Stderr, "error unmarshalling heartbeat signal node: %s\n", err)
+			if err != nil {
+				log.Printf("%s\n", err)
+			}
+		}
+		s.Mu.Lock()
+		s.Nodes[node.Addr] = node
+		s.Nodes[node.Addr].HeartBeat = time.Now()
+		s.Mu.Unlock()
+	}
+}
+
+func successFind(w http.ResponseWriter, val *Record) {
+	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", "application/json")
+
+	reqBody, err := json.Marshal(val)
+	if err != nil {
+		_, err = fmt.Fprintf(os.Stderr, "error marshalling record: %s\n", err)
+		if err != nil {
+			log.Printf("%s\n", err)
+		}
+	}
+	w.Write(reqBody)
+}
+
+func noRecordFind(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusNotFound)
+}
+
+func (s *Swarm) HandleGetRecord(w http.ResponseWriter, r *http.Request) {
+	log.Printf("Got GET_RECORD")
+
+	var findRecord Command
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		_, err = fmt.Fprintf(os.Stderr, "error reading GET_request body: %s\n", err)
+		if err != nil {
+			log.Printf("%s\n", err)
+		}
+	}
+
+	err = json.Unmarshal(body, &findRecord)
+	val, ok := s.ThisNode.DB[findRecord.Args[0]]
+
+	if ok {
+		successFind(w, val)
+	} else {
+		noRecordFind(w)
+	}
+}
+
+func (s *Swarm) HandleSetRecord(w http.ResponseWriter, r *http.Request) {
+	log.Printf("Got SET_RECORD")
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		_, err = fmt.Fprintf(os.Stderr, "error reading request body: %s\n", err)
+		_, err = fmt.Fprintf(os.Stderr, "error reading GET_request body: %s\n", err)
 		if err != nil {
 			log.Printf("%s\n", err)
 		}
 	}
-	err = json.Unmarshal(body, &elem)
 
-	log.Printf("Got heartbeat signal from %s\n", elem.Addr)
-
+	var findRecord Command
+	err = json.Unmarshal(body, &findRecord)
 	if err != nil {
-		_, err = fmt.Fprintf(os.Stderr, "error unmarshalling heartbeat signal node: %s\n", err)
+		_, err = fmt.Fprintf(os.Stderr, "error unmarshalling SET request: %s\n", err)
 		if err != nil {
 			log.Printf("%s\n", err)
 		}
 	}
-	s.Mu.Lock()
-	s.Nodes[elem.Addr] = elem
-	s.Nodes[elem.Addr].HeartBeat = time.Now()
-	s.Mu.Unlock()
+	uuid := findRecord.Args[0]
+	value := findRecord.Args[1]
+	_, ok := s.ThisNode.DB[uuid]
+	var flagCount bool
+	if !ok {
+		flagCount = true
+	}
+
+	var tempRecord Record
+	tempRecord.Value = value
+	s.ThisNode.Mu.Lock()
+	s.ThisNode.DB[uuid] = &tempRecord
+	if flagCount {
+		s.ThisNode.RecordsCount++
+	}
+	s.ThisNode.Mu.Unlock()
+
+	w.WriteHeader(http.StatusOK)
+
+	// if flagCount{
+	// 	w.WriteHeader(http.StatusCreated)
+	// } else {
+	// 	w.WriteHeader(http.StatusAccepted)
+	// }
+}
+
+func (s *Swarm) HandleDelRecord(w http.ResponseWriter, r *http.Request) {
+	//	var elem *Swarm
+	log.Printf("Got DEL_RECORD")
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		_, err = fmt.Fprintf(os.Stderr, "error reading GET_request body: %s\n", err)
+		if err != nil {
+			log.Printf("%s\n", err)
+		}
+	}
+
+	var findRecord Command
+	err = json.Unmarshal(body, &findRecord)
+	if err != nil {
+		_, err = fmt.Fprintf(os.Stderr, "error unmarshalling SET request: %s\n", err)
+		if err != nil {
+			log.Printf("%s\n", err)
+		}
+	}
+
+	uuid := findRecord.Args[0]
+	_, ok := s.ThisNode.DB[uuid]
+
+	if ok {
+		s.ThisNode.Mu.Lock()
+		delete(s.ThisNode.DB, uuid)
+		s.ThisNode.RecordsCount--
+		s.ThisNode.Mu.Unlock()
+	}
+
+	w.WriteHeader(http.StatusOK)
+
+	// if flagCount{
+	// 	w.WriteHeader(http.StatusCreated)
+	// } else {
+	// 	w.WriteHeader(http.StatusAccepted)
+	// }
 }
 
 func (s *Swarm) ServeRequests() {
 
 	http.HandleFunc("/heartBeat", s.HandleHeartBeat)
-	http.HandleFunc("/getServer", s.HandleGetServer)
+	http.HandleFunc("/getServer", s.HandleHeartBeat)
+	http.HandleFunc("/getRecord", s.HandleGetRecord)
+	http.HandleFunc("/setRecord", s.HandleSetRecord)
+	http.HandleFunc("/delRecord", s.HandleDelRecord)
+
 	err := http.ListenAndServe(s.ThisNode.Addr, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
-
 }
