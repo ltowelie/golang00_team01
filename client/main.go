@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/google/uuid"
 	"io"
 	"log"
 	"net/http"
@@ -16,6 +15,8 @@ import (
 	"sync"
 	"team01/node"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -34,6 +35,7 @@ type Client struct {
 	port           string
 	currentSwarm   *node.Swarm
 	currentCommand Command
+	Mu             sync.Mutex
 }
 
 func getCommand() (isInputCorrect, stopReading bool, command *Command) {
@@ -103,16 +105,14 @@ func getCommand() (isInputCorrect, stopReading bool, command *Command) {
 	return
 }
 
-func getUrl() (urlS string) {
-
-	return urlS
-}
-
-func (c Client) printKnownNodes(swarm node.Swarm) {
-	fmt.Printf("Connected to a database of Warehouse 13 at %s\n", swarm.ThisNode.Addr)
+func (c Client) printKnownNodes() {
+	fmt.Printf("Connected to a database of Warehouse 13 at %s:%s\n", c.host, c.port)
 	fmt.Println("Known nodes:")
-	for _, val := range swarm.Nodes {
-		fmt.Printf("%v\n", val.Addr)
+	c.Mu.Lock()
+	nodes := c.currentSwarm.Nodes
+	c.Mu.Unlock()
+	for _, val := range nodes {
+		fmt.Printf("%v\n", (*val).Addr)
 	}
 }
 
@@ -135,24 +135,43 @@ func (c Client) getServer() (swarm node.Swarm, err error) {
 }
 
 func (c Client) setRecord() error {
+	c.Mu.Lock()
+	nodes := c.currentSwarm.Nodes
+	c.Mu.Unlock()
 	client := &http.Client{}
 
-	body, err := json.Marshal(c.currentCommand)
-	// fmt.Println("body: ", body)
-	req, err := http.NewRequest(set, "http://"+c.host+":"+c.port+"/setRecord", bytes.NewBuffer(body))
-	if err != nil {
-		fmt.Println("Error in Set request: ", err)
-		return err
+	for _, node := range nodes {
+		getStr := "{\"command\": \"GET\", \"args\": [\"" + c.currentCommand.Args[0] + "\"]}"
+		// fmt.Println("getStr: ", getStr)
+		// statusCode, _ := c.getRecord()
+		req, err := http.NewRequest(get, "http://"+(*node).Addr+"/findRecord", bytes.NewBufferString(getStr))
+		if err != nil {
+			log.Println("Error: ", err)
+			return
+		}
+		req.Header.Add("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if resp.StatusCode == 404 {
+			continue
+		}
+
+		body, err := json.Marshal(c.currentCommand)
+		req, err := http.NewRequest(set, "http://"+val.Addr+"/setRecord", bytes.NewBuffer(body))
+		if err != nil {
+			fmt.Println("Error in Set request: ", err)
+			return err
+		}
+		req.Header.Add("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			fmt.Println("Request wasn't send: ", err)
+			return err
+		}
+		defer resp.Body.Close()
 	}
-	req.Header.Add("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Println("Request wasn't send: ", err)
-		return err
-	}
-	defer resp.Body.Close()
 	return nil
 }
+
 func (c Client) getHeartBeat() error {
 	swarmInfo, err := c.getServer()
 	if err != nil {
@@ -164,7 +183,10 @@ func (c Client) getHeartBeat() error {
 }
 
 func (c Client) getRecord() (statusCode int, value node.Record) {
-	for _, server := range c.currentSwarm.Nodes {
+	c.Mu.Lock()
+	nodes := c.currentSwarm.Nodes
+	c.Mu.Unlock()
+	for _, server := range nodes {
 		client := &http.Client{}
 		body, err := json.Marshal(c.currentCommand)
 		req, err := http.NewRequest(get, "http://"+server.Addr+"/findRecord", bytes.NewBuffer(body))
@@ -193,7 +215,7 @@ func (c Client) getRecord() (statusCode int, value node.Record) {
 	}
 	if statusCode == 0 {
 		value.Value = "Not found"
-		return 404, value
+		statusCode = 404
 	}
 	return statusCode, value
 }
@@ -245,19 +267,16 @@ func isUUID4(str string) bool {
 }
 
 func main() {
-	// parse args and connect to node
-
 	// create a new client
 	client := newClient()
 
-	// client.getHostPort() //string - "127.0.0.1", string "8765"
-
-	//first connect to server - getting info about servers of Swarm
+	//first connect to node - getting info about servers of Swarm
 	swarmInfo, err := client.getServer()
 	if err != nil {
 		log.Fatalln("Error on server")
 	}
-	client.printKnownNodes(swarmInfo)
+	client.currentSwarm = &swarmInfo
+	client.printKnownNodes()
 
 	wg := new(sync.WaitGroup)
 	wg.Add(1)
@@ -295,15 +314,14 @@ func main() {
 					fmt.Println("Record not found")
 					return
 				}
-
 			case set:
 				log.Println("Set request")
 				//set
-				// err := client.Set()
-				// if err != nil {
-				// 	fmt.Println("Error in Set request: ", err)
-				// 	return
-				// }
+				err := client.setRecord()
+				if err != nil {
+					fmt.Println("Error in Set request: ", err)
+					return
+				}
 			case del:
 				log.Println("Delete request")
 				//delete
