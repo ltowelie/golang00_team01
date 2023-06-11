@@ -84,6 +84,7 @@ func main() {
 		var err error
 		swarm = thisNode.SendGetServer(existAddr)
 		swarm.ThisNode = thisNode
+		swarm.Nodes[thisNode.Addr] = thisNode
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -126,7 +127,7 @@ func main() {
 	go func() {
 		ticker := time.Tick(time.Second * timeoutHB)
 		for {
-			//log.Printf("Проверка heartbeat сигналов (%d)\n", len(swarm.Nodes))
+			log.Printf("Проверка heartbeat сигналов (%d)\n", len(swarm.Nodes))
 			<-ticker
 			if len(swarm.Nodes) == 0 {
 				break
@@ -135,7 +136,7 @@ func main() {
 				if k == thisNode.Addr {
 					continue
 				}
-				if time.Now().Unix()-v.HeartBeat.Unix() > int64(time.Second*timeoutHB) {
+				if time.Now().UnixNano()-v.HeartBeat.UnixNano() > int64(time.Second*timeoutHB) {
 					log.Printf("Удаление ноды %s, так как вовремя не пришел heartbeat сигнал от неё\n", v.Addr)
 					swarm.Mu.Lock()
 					delete(swarm.Nodes, k)
@@ -146,5 +147,4 @@ func main() {
 		wg.Done()
 	}()
 	wg.Wait()
-
 }
