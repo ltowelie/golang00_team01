@@ -16,6 +16,7 @@ type Node struct {
 	Addr         string             `json:"address"`
 	RecordsCount int                `json:"records_count"`
 	Keys         []string           `json:"-"`
+	Mu           sync.Mutex         `json:"-"`
 	DB           map[string]*Record `json:"-"`
 	HeartBeat    time.Time          `json:"-"`
 }
@@ -71,12 +72,14 @@ func (n Node) SendHeartBeat(addr string) {
 		fmt.Fprintf(os.Stderr, "error send request: %s\n", err)
 	}
 
-	defer func(Body io.ReadCloser) {
-		err = Body.Close()
-		if err != nil {
+	if res != nil {
+		defer func(Body io.ReadCloser) {
+			err = Body.Close()
+			if err != nil {
 
-		}
-	}(res.Body)
+			}
+		}(res.Body)
+	}
 
 }
 
@@ -123,17 +126,13 @@ func (n Node) SendGetServer(addr string) *Swarm {
 
 func (s *Swarm) HandleGetServer(w http.ResponseWriter, r *http.Request) {
 
-	log.Printf("Got heartbeat signal request")
-
 	w.Header().Set("Content-Type", "application/json")
 	err := json.NewEncoder(w).Encode(s)
 	if err != nil {
-		_, err = fmt.Fprintf(os.Stderr, "error encoding swarm: %s\n", err)
+		_, err = fmt.Fprintf(os.Stderr, "error encoding swarm in get server: %s\n", err)
 	}
 
 	var elem *Node
-
-	log.Printf("Got server signal")
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -149,6 +148,9 @@ func (s *Swarm) HandleGetServer(w http.ResponseWriter, r *http.Request) {
 			log.Printf("%s\n", err)
 		}
 	}
+
+	log.Printf("Got get server signal from %s\n", elem.Addr)
+
 	s.Mu.Lock()
 	s.Nodes[elem.Addr] = elem
 	s.Nodes[elem.Addr].HeartBeat = time.Now()
@@ -161,8 +163,6 @@ func (s *Swarm) HandleHeartBeat(w http.ResponseWriter, r *http.Request) {
 
 	_ = w
 
-	log.Printf("Got heartbeat signal")
-
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		_, err = fmt.Fprintf(os.Stderr, "error reading request body: %s\n", err)
@@ -171,6 +171,9 @@ func (s *Swarm) HandleHeartBeat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	err = json.Unmarshal(body, &elem)
+
+	log.Printf("Got heartbeat signal from %s\n", elem.Addr)
+
 	if err != nil {
 		_, err = fmt.Fprintf(os.Stderr, "error unmarshalling heartbeat signal node: %s\n", err)
 		if err != nil {
