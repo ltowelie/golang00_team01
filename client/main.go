@@ -13,7 +13,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"team01/node"
+	"time"
 )
 
 const (
@@ -23,8 +25,8 @@ const (
 )
 
 type Command struct {
-	Action string
-	Args   []string
+	Action string   `json:"command"`
+	Args   []string `json:"args"`
 }
 
 type Client struct {
@@ -71,6 +73,7 @@ func getCommand() (isInputCorrect, stopReading bool, command *Command) {
 		} else {
 			if stringsFields[0] == get || stringsFields[0] == set || stringsFields[0] == del {
 				args := stringsFields[1:]
+
 				if (stringsFields[0] == get || stringsFields[0] == del) && len(args) != 1 {
 					_, err = fmt.Fprint(os.Stderr, "Wrong command arguments count.\n")
 					if err != nil {
@@ -106,52 +109,93 @@ func getUrl() (urlS string) {
 }
 
 func (c Client) printKnownNodes(swarm node.Swarm) {
-	fmt.Println("Connected to a database of Warehouse 13 at ", c.host, ":", c.port)
+	fmt.Printf("Connected to a database of Warehouse 13 at %s\n", swarm.ThisNode.Addr)
 	fmt.Println("Known nodes:")
 	for _, val := range swarm.Nodes {
-		fmt.Println(val.Host, ":", val.Port)
+		fmt.Printf("%v\n", val.Addr)
 	}
 }
 
-func (c Client) Get() (swarm node.Swarm, err error) {
+func (c Client) getServer() (swarm node.Swarm, err error) {
 	client := &http.Client{}
 
-	resp, err := client.Get("https://" + c.host + ":" + c.port + "/getHeartBeat")
+	resp, err := client.Get("http://" + c.host + ":" + c.port + "/getHeartBeat")
 	if err != nil {
-		fmt.Println("Error from Get method: ", err)
+		fmt.Println("Error from getServer: ", err)
 		return swarm, err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		fmt.Println("Error from Get method: ", err)
+		fmt.Println("Error from getServer: ", err)
 		return swarm, err
 	}
 	json.Unmarshal(body, &swarm)
 	return swarm, nil
 }
 
-func (c Client) Set() error {
+func (c Client) setRecord() error {
 	client := &http.Client{}
 
-	body := ""
-	for _, arg := range c.currentCommand.Args {
-		body = body + arg + "&"
-	}
-	fmt.Println("body: ", body[:len(body)-1])
-	req, err := http.NewRequest(set, "http://"+c.host+":"+c.port+"/setRequest", bytes.NewBufferString(body[:len(body)-1]))
+	body, err := json.Marshal(c.currentCommand)
+	// fmt.Println("body: ", body)
+	req, err := http.NewRequest(set, "http://"+c.host+":"+c.port+"/setRecord", bytes.NewBuffer(body))
 	if err != nil {
 		fmt.Println("Error in Set request: ", err)
 		return err
 	}
-	req.Header.Add("Accept", "text/html")
+	req.Header.Add("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Println("Error in Set request: ", err)
+		fmt.Println("Request wasn't send: ", err)
 		return err
 	}
 	defer resp.Body.Close()
 	return nil
+}
+func (c Client) getHeartBeat() error {
+	swarmInfo, err := c.getServer()
+	if err != nil {
+		log.Println("Error on server: ", err)
+		return err
+	}
+	c.currentSwarm = &swarmInfo
+	return nil
+}
+
+func (c Client) getRecord() (statusCode int, value node.Record) {
+	for _, server := range c.currentSwarm.Nodes {
+		client := &http.Client{}
+		body, err := json.Marshal(c.currentCommand)
+		req, err := http.NewRequest(get, "http://"+server.Addr+"/findRecord", bytes.NewBuffer(body))
+		if err != nil {
+			log.Println("Error: ", err)
+			return
+		}
+		req.Header.Add("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			fmt.Println("Request wasn't send: ", err)
+			return
+		}
+		if resp.StatusCode == 200 {
+			statusCode = resp.StatusCode
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				log.Println("Error: ", err)
+				return
+			}
+			json.Unmarshal(body, &value)
+			break
+		}
+		fmt.Println("value json: ", value)
+	}
+	if statusCode == 0 {
+		value.Value = "Not found"
+		return 404, value
+	}
+	return statusCode, value
 }
 
 func newClient() Client {
@@ -201,25 +245,40 @@ func isUUID4(str string) bool {
 }
 
 func main() {
+	// parse args and connect to node
 
 	// create a new client
 	client := newClient()
 
-	// getHostPort() //string - "127.0.0.1", string "8765"
+	// client.getHostPort() //string - "127.0.0.1", string "8765"
 
 	//first connect to server - getting info about servers of Swarm
-	//swarmInfo, err := client.Get()
-	//if err != nil {
-	//	log.Fatalln("Error on server")
-	//}
-	//client.printKnownNodes(swarmInfo)
+	swarmInfo, err := client.getServer()
+	if err != nil {
+		log.Fatalln("Error on server")
+	}
+	client.printKnownNodes(swarmInfo)
 
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
 	// goroutine that receives heartbeats and changes nodes
+	go func(wg *sync.WaitGroup) {
+		ticker := time.Tick(time.Second)
+		for {
+			//log.Println("Отправка heartbeat сигнала нодам")
+			<-ticker
+			err := client.getHeartBeat()
+			if err != nil {
+				break
+			}
+		}
+		wg.Done()
+	}(wg)
 
 	// command execution loop
 	for {
 		isInputCorrect, stopReading, command := getCommand()
-		fmt.Println("main | command: ", command.Action)
+		// fmt.Println("main | command: ", command.Action)
 		if isInputCorrect {
 			// command execute
 			client.currentCommand = *command
@@ -228,20 +287,23 @@ func main() {
 			case get:
 				log.Println("Get request")
 				//get
-				swarm, err := client.Get()
-				if err != nil {
-					fmt.Println("Error in Get request: ", err)
+				statusCode, value := client.getRecord()
+				switch statusCode {
+				case 200:
+					fmt.Println(value)
+				case 404:
+					fmt.Println("Record not found")
 					return
 				}
-				client.currentSwarm = &swarm
+
 			case set:
 				log.Println("Set request")
 				//set
-				err := client.Set()
-				if err != nil {
-					fmt.Println("Error in Set request: ", err)
-					return
-				}
+				// err := client.Set()
+				// if err != nil {
+				// 	fmt.Println("Error in Set request: ", err)
+				// 	return
+				// }
 			case del:
 				log.Println("Delete request")
 				//delete
@@ -255,5 +317,5 @@ func main() {
 			break
 		}
 	}
-
+	wg.Wait()
 }
