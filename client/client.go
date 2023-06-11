@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,6 +37,11 @@ type Client struct {
 	currentSwarm   *node.Swarm
 	currentCommand Command
 	Mu             sync.Mutex
+}
+
+type NodeStruct struct {
+	key   string
+	value *node.Node
 }
 
 func getCommand() (isInputCorrect, stopReading bool, command *Command) {
@@ -66,7 +72,7 @@ func getCommand() (isInputCorrect, stopReading bool, command *Command) {
 		}
 		isInputCorrect = false
 	} else if isInputCorrect {
-		stringsFields := strings.Fields(input)
+		stringsFields := strings.SplitN(input, " ", 3)
 		if len(stringsFields) < 2 {
 			_, err = fmt.Fprint(os.Stderr, "Wrong command value.\n")
 			if err != nil {
@@ -87,7 +93,7 @@ func getCommand() (isInputCorrect, stopReading bool, command *Command) {
 					if err != nil {
 						return false, true, nil
 					}
-				} else if stringsFields[0] == set && len(args) != 5 {
+				} else if stringsFields[0] == set && len(args) != 2 {
 					_, err = fmt.Fprint(os.Stderr, "Wrong command arguments count2.\n")
 					if err != nil {
 						return false, true, nil
@@ -146,11 +152,12 @@ func (c Client) setRecord() error {
 	nodes := c.currentSwarm.Nodes
 	c.Mu.Unlock()
 	client := &http.Client{}
-
-	for _, server := range nodes {
+	// SET 0d5d3807-5fbf-4228-a657-5a091c4e497f '{"name": "Chapayev's Mustache comb"}'
+	var setNodes []string
+	for serverAddr, server := range nodes {
 		getStr := "{\"command\": \"GET\", \"args\": [\"" + c.currentCommand.Args[0] + "\"]}"
-		fmt.Println("getStr: ", getStr)
-		// statusCode, _ := c.getRecord()
+		// fmt.Println("getStr: ", getStr)
+		// fmt.Println("address: ", (*server).Addr)
 		req, err := http.NewRequest(get, "http://"+(*server).Addr+"/findRecord", bytes.NewBufferString(getStr))
 		if err != nil {
 			log.Println("Error: ", err)
@@ -158,29 +165,54 @@ func (c Client) setRecord() error {
 		}
 		req.Header.Add("Content-Type", "application/json")
 		resp, err := client.Do(req)
-		if resp.StatusCode == 404 {
-			continue
+		if resp.StatusCode == 200 {
+			setNodes = append(setNodes, serverAddr)
 		}
+	}
+	// sorting map of nodes
+	var nodesStruct []NodeStruct
+	for key, val := range nodes {
+		nS := &NodeStruct{
+			key:   key,
+			value: val,
+		}
+		nodesStruct = append(nodesStruct, *nS)
+	}
+	// slices.Sort(nodesStruct, func(i, j int) bool {
+	// 	return nodesStruct[i].value.RecordsCount < nodesStruct[j].value.RecordsCount
+	// })
+	sort.Slice(nodesStruct, func(i, j int) bool {
+		return nodesStruct[i].value.RecordsCount < nodesStruct[j].value.RecordsCount
+	})
+	if len(nodesStruct) >= 2 {
+		for i, val := range nodesStruct {
+			if i < 2 {
+				setNodes = append(setNodes, val.key)
+			}
+		}
+	}
 
+	// send set request to server
+	for _, server := range setNodes {
 		body, err := json.Marshal(c.currentCommand)
 		if err != nil {
 			log.Println(err)
 			return err
 		}
 		bodyReader := bytes.NewReader(body)
-		req, err = http.NewRequest(set, "http://"+(*server).Addr+"/setRecord", bodyReader)
+		req, err := http.NewRequest(set, "http://"+server+"/setRecord", bodyReader)
 		if err != nil {
-			fmt.Println("Error in Set request: ", err)
+			log.Println("Error: ", err)
 			return err
 		}
 		req.Header.Add("Content-Type", "application/json")
-		resp, err = client.Do(req)
+		_, err = client.Do(req)
 		if err != nil {
 			fmt.Println("Request wasn't send: ", err)
 			return err
 		}
-		defer resp.Body.Close()
 	}
+	fmt.Printf("Created (%d replicas)\n", len(setNodes))
 	return nil
 }
 
@@ -326,11 +358,10 @@ func main() {
 	for {
 		isInputCorrect, stopReading, command := getCommand()
 		// fmt.Println("main | command: ", command.Action)
-		fmt.Println("isInputCorrect: ", isInputCorrect)
-		// SET 0d5d3807-5fbf-4228-a657-5a091c4e497f '{"name": "Chapayev's Mustache comb"}'
+		// fmt.Println("isInputCorrect: ", isInputCorrect)
 		if isInputCorrect {
 			// command execute
-			fmt.Println("command: ", (*command).Action)
+			// fmt.Println("command: ", (*command).Action)
 			client.currentCommand = *command
 			switch client.currentCommand.Action {
 			case get:
