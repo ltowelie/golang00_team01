@@ -16,6 +16,7 @@ type Node struct {
 	Addr         string             `json:"address"`
 	RecordsCount int                `json:"records_count"`
 	Keys         []string           `json:"-"`
+	Mu           sync.Mutex         `json:"-"`
 	DB           map[string]*Record `json:"-"`
 	HeartBeat    time.Time          `json:"-"`
 }
@@ -34,7 +35,7 @@ type Record struct {
 func (s *Swarm) SendHeartbeatToAllNodes() error {
 
 	wg := new(sync.WaitGroup)
-
+	s.Mu.Lock()
 	for _, node := range s.Nodes {
 
 		if s.ThisNode == node {
@@ -46,11 +47,12 @@ func (s *Swarm) SendHeartbeatToAllNodes() error {
 			s.ThisNode.SendHeartBeat(node.Addr)
 		}(s, node, wg)
 	}
+	s.Mu.Unlock()
 	wg.Wait()
 	return nil
 }
 
-func (n Node) SendHeartBeat(addr string) {
+func (n *Node) SendHeartBeat(addr string) {
 
 	client := &http.Client{}
 
@@ -62,25 +64,27 @@ func (n Node) SendHeartBeat(addr string) {
 
 	req, err := http.NewRequest(http.MethodPost, "http://"+addr+"/heartBeat", bodyReader)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error create request: %s\n", err)
+		fmt.Fprintf(os.Stderr, "error create heartbeat to %s: %s\n", addr, err)
 	}
 	req.Header.Add("Content-Type", "application/json")
 
 	res, err := client.Do(req)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error send request: %s\n", err)
+		fmt.Fprintf(os.Stderr, "error send heartbeat to %s: %s\n", addr, err)
 	}
 
-	defer func(Body io.ReadCloser) {
-		err = Body.Close()
-		if err != nil {
+	if res != nil {
+		defer func(Body io.ReadCloser) {
+			err = Body.Close()
+			if err != nil {
 
-		}
-	}(res.Body)
+			}
+		}(res.Body)
+	}
 
 }
 
-func (n Node) SendGetServer(addr string) *Swarm {
+func (n *Node) SendGetServer(addr string) *Swarm {
 
 	client := &http.Client{}
 
@@ -92,24 +96,24 @@ func (n Node) SendGetServer(addr string) *Swarm {
 
 	req, err := http.NewRequest(http.MethodPost, "http://"+addr+"/getServer", bodyReader)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error create request: %s\n", err)
+		fmt.Fprintf(os.Stderr, "error create getServer request to %s: %s\n", addr, err)
 	}
 	req.Header.Add("Content-Type", "application/json")
 
 	res, err := client.Do(req)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error send request: %s\n", err)
+		fmt.Fprintf(os.Stderr, "error send getServer request to %s: %s\n", addr, err)
 	}
 
 	var swarm Swarm
 
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error reading request body: %s\n", err)
+		fmt.Fprintf(os.Stderr, "error reading getServer request body from %s: %s\n", addr, err)
 	}
 	err = json.Unmarshal(body, &swarm)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error unmarshalling swarm: %s\n", err)
+		fmt.Fprintf(os.Stderr, "error unmarshalling swarm struct in getServer request from %s: %s\n", addr, err)
 	}
 
 	defer func(Body io.ReadCloser) {
@@ -123,17 +127,13 @@ func (n Node) SendGetServer(addr string) *Swarm {
 
 func (s *Swarm) HandleGetServer(w http.ResponseWriter, r *http.Request) {
 
-	log.Printf("Got heartbeat signal request")
-
 	w.Header().Set("Content-Type", "application/json")
 	err := json.NewEncoder(w).Encode(s)
 	if err != nil {
-		_, err = fmt.Fprintf(os.Stderr, "error encoding swarm: %s\n", err)
+		_, err = fmt.Fprintf(os.Stderr, "error encoding swarm in get server: %s\n", err)
 	}
 
 	var elem *Node
-
-	log.Printf("Got server signal")
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -149,6 +149,9 @@ func (s *Swarm) HandleGetServer(w http.ResponseWriter, r *http.Request) {
 			log.Printf("%s\n", err)
 		}
 	}
+
+	log.Printf("Got get server signal from %s\n", elem.Addr)
+
 	s.Mu.Lock()
 	s.Nodes[elem.Addr] = elem
 	s.Nodes[elem.Addr].HeartBeat = time.Now()
@@ -161,8 +164,6 @@ func (s *Swarm) HandleHeartBeat(w http.ResponseWriter, r *http.Request) {
 
 	_ = w
 
-	log.Printf("Got heartbeat signal")
-
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		_, err = fmt.Fprintf(os.Stderr, "error reading request body: %s\n", err)
@@ -171,6 +172,9 @@ func (s *Swarm) HandleHeartBeat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	err = json.Unmarshal(body, &elem)
+
+	log.Printf("Got heartbeat signal from %s\n", elem.Addr)
+
 	if err != nil {
 		_, err = fmt.Fprintf(os.Stderr, "error unmarshalling heartbeat signal node: %s\n", err)
 		if err != nil {
