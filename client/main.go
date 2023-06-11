@@ -107,22 +107,22 @@ func (c Client) printKnownNodes(swarm node.Swarm) {
 	fmt.Println("Connected to a database of Warehouse 13 at ", c.host, ":", c.port)
 	fmt.Println("Known nodes:")
 	for _, val := range swarm.Nodes {
-		fmt.Println(val.Host, ":", val.Port)
+		fmt.Printf("%s:%s\n", val.Host, val.Port)
 	}
 }
 
 func (c Client) getServer() (swarm node.Swarm, err error) {
 	client := &http.Client{}
 
-	resp, err := client.Get("https://" + c.host + ":" + c.port + "/getServer")
+	resp, err := client.Get("http://" + c.host + ":" + c.port + "/getHeartBeat")
 	if err != nil {
-		fmt.Println("Error from Get method: ", err)
+		fmt.Println("Error from getServer: ", err)
 		return swarm, err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		fmt.Println("Error from Get method: ", err)
+		fmt.Println("Error from getServer: ", err)
 		return swarm, err
 	}
 	json.Unmarshal(body, &swarm)
@@ -133,16 +133,16 @@ func (c Client) setRecord() error {
 	client := &http.Client{}
 
 	body, err := json.Marshal(c.currentCommand)
-	fmt.Println("body: ", body[:len(body)-1])
+	// fmt.Println("body: ", body)
 	req, err := http.NewRequest(set, "http://"+c.host+":"+c.port+"/setRecord", bytes.NewBuffer(body))
 	if err != nil {
 		fmt.Println("Error in Set request: ", err)
 		return err
 	}
-	req.Header.Add("Accept", "text/html")
+	req.Header.Add("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Println("Error in Set request: ", err)
+		fmt.Println("Request wasn't send: ", err)
 		return err
 	}
 	defer resp.Body.Close()
@@ -159,6 +159,41 @@ func (c Client) getHeartBeat() error {
 	return nil
 }
 
+func (c Client) getRecord() (statusCode int, value node.Record) {
+	for _, server := range c.currentSwarm.Nodes {
+		client := &http.Client{}
+		body, err := json.Marshal(c.currentCommand)
+		req, err := http.NewRequest(get, "http://"+server.Host+":"+server.Port+"/findRecord", bytes.NewBuffer(body))
+		if err != nil {
+			log.Println("Error: ", err)
+			return
+		}
+		req.Header.Add("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			fmt.Println("Request wasn't send: ", err)
+			return
+		}
+		if resp.StatusCode == 200 {
+			statusCode = resp.StatusCode
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				log.Println("Error: ", err)
+				return
+			}
+			json.Unmarshal(body, &value)
+			break
+		}
+		fmt.Println("value json: ", value)
+	}
+	if statusCode == 0 {
+		value.Value = "Not found"
+		return 404, value
+	}
+	return statusCode, value
+}
+
 func main() {
 	// parse args and connect to node
 
@@ -168,7 +203,7 @@ func main() {
 		port: "8765",
 	}
 
-	client.getHostPort() //string - "127.0.0.1", string "8765"
+	// client.getHostPort() //string - "127.0.0.1", string "8765"
 
 	//first connect to server - getting info about servers of Swarm
 	swarmInfo, err := client.getServer()
@@ -196,7 +231,7 @@ func main() {
 	// command execution loop
 	for {
 		isInputCorrect, stopReading, command := getCommand()
-		fmt.Println("main | command: ", command.Action)
+		// fmt.Println("main | command: ", command.Action)
 		if isInputCorrect {
 			// command execute
 			client.currentCommand = *command
@@ -205,20 +240,23 @@ func main() {
 			case get:
 				log.Println("Get request")
 				//get
-				statusCode := client.getRecord()
-				// if err != nil {
-				// 	fmt.Println("Error in Get request: ", err)
-				// 	return
-				// }
-				// client.currentSwarm = &swarm
+				statusCode, value := client.getRecord()
+				switch statusCode {
+				case 200:
+					fmt.Println(value)
+				case 404:
+					fmt.Println("Record not found")
+					return
+				}
+
 			case set:
 				log.Println("Set request")
 				//set
-				err := client.Set()
-				if err != nil {
-					fmt.Println("Error in Set request: ", err)
-					return
-				}
+				// err := client.Set()
+				// if err != nil {
+				// 	fmt.Println("Error in Set request: ", err)
+				// 	return
+				// }
 			case del:
 				log.Println("Delete request")
 				//delete
