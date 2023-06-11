@@ -184,6 +184,17 @@ func (c Client) getHeartBeat() error {
 		return err
 	}
 	c.currentSwarm = &swarmInfo
+	addr := fmt.Sprintf("%s:%s", c.host, c.port)
+	if _, ok := swarmInfo.Nodes[addr]; !ok {
+		for _, val := range swarmInfo.Nodes {
+			arr := strings.Split(val.Addr, ":")
+			c.host = arr[0]
+			c.port = arr[1]
+			break
+		}
+		fmt.Printf("Reconnected to a database of Warehouse 13 at %s:%s\n", c.host, c.port)
+		c.printKnownNodes()
+	}
 	return nil
 }
 
