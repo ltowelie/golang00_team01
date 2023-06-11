@@ -4,11 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"team01/node"
 )
@@ -68,7 +71,6 @@ func getCommand() (isInputCorrect, stopReading bool, command *Command) {
 		} else {
 			if stringsFields[0] == get || stringsFields[0] == set || stringsFields[0] == del {
 				args := stringsFields[1:]
-
 				if (stringsFields[0] == get || stringsFields[0] == del) && len(args) != 1 {
 					_, err = fmt.Fprint(os.Stderr, "Wrong command arguments count.\n")
 					if err != nil {
@@ -79,6 +81,8 @@ func getCommand() (isInputCorrect, stopReading bool, command *Command) {
 					if err != nil {
 						return
 					}
+				} else if !isUUID4(args[0]) {
+					_, err = fmt.Fprint(os.Stderr, "Error: Key is not a proper UUID4\n")
 				} else {
 					command = &Command{
 						Action: stringsFields[0],
@@ -150,24 +154,65 @@ func (c Client) Set() error {
 	return nil
 }
 
+func newClient() Client {
+	var host, port string
+
+	hostUsageStr := "host to listen (must be ip or hostname)"
+	portUsageStr := "port to listen (must be 1-65535)"
+
+	flag.StringVar(&host, "H", "", hostUsageStr)
+	flag.StringVar(&port, "P", "", portUsageStr)
+	flag.Parse()
+	stop := port == ""
+	if stop == false {
+		iPort, err := strconv.Atoi(port)
+		if err != nil {
+			stop = true
+		} else if iPort < 1 || iPort > 65535 {
+			stop = true
+		}
+		stop = false
+	}
+
+	if stop {
+		fmt.Printf("Usage %s:\n", os.Args[0])
+		flag.PrintDefaults()
+		os.Exit(1)
+	}
+
+	client := Client{
+		host: host,
+		port: port,
+	}
+
+	return client
+}
+
+func isUUID4(str string) bool {
+	key, err := uuid.ParseBytes([]byte(str))
+	if err != nil {
+		return false
+	}
+	v := key.Version()
+	if v != uuid.Version(byte(4)) {
+		return false
+	}
+	return true
+}
+
 func main() {
 
-	// parse args and connect to node
-
 	// create a new client
-	client := Client{
-		host: "127.0.0.1",
-		port: "8765",
-	}
+	client := newClient()
 
 	// getHostPort() //string - "127.0.0.1", string "8765"
 
 	//first connect to server - getting info about servers of Swarm
-	swarmInfo, err := client.Get()
-	if err != nil {
-		log.Fatalln("Error on server")
-	}
-	client.printKnownNodes(swarmInfo)
+	//swarmInfo, err := client.Get()
+	//if err != nil {
+	//	log.Fatalln("Error on server")
+	//}
+	//client.printKnownNodes(swarmInfo)
 
 	// goroutine that receives heartbeats and changes nodes
 
