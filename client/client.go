@@ -119,7 +119,7 @@ func (c Client) printKnownNodes() {
 func (c Client) getServer() (swarm node.Swarm, err error) {
 	client := &http.Client{}
 
-	resp, err := client.Get("http://" + c.host + ":" + c.port + "/getHeartBeat")
+	resp, err := client.Get("http://" + c.host + ":" + c.port + "/getServer")
 	if err != nil {
 		fmt.Println("Error from getServer: ", err)
 		return swarm, err
@@ -140,14 +140,14 @@ func (c Client) setRecord() error {
 	c.Mu.Unlock()
 	client := &http.Client{}
 
-	for _, node := range nodes {
+	for _, server := range nodes {
 		getStr := "{\"command\": \"GET\", \"args\": [\"" + c.currentCommand.Args[0] + "\"]}"
 		// fmt.Println("getStr: ", getStr)
 		// statusCode, _ := c.getRecord()
-		req, err := http.NewRequest(get, "http://"+(*node).Addr+"/findRecord", bytes.NewBufferString(getStr))
+		req, err := http.NewRequest(get, "http://"+(*server).Addr+"/findRecord", bytes.NewBufferString(getStr))
 		if err != nil {
 			log.Println("Error: ", err)
-			return
+			return err
 		}
 		req.Header.Add("Content-Type", "application/json")
 		resp, err := client.Do(req)
@@ -156,13 +156,18 @@ func (c Client) setRecord() error {
 		}
 
 		body, err := json.Marshal(c.currentCommand)
-		req, err := http.NewRequest(set, "http://"+val.Addr+"/setRecord", bytes.NewBuffer(body))
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+		bodyReader := bytes.NewReader(body)
+		req, err = http.NewRequest(set, "http://"+(*server).Addr+"/setRecord", bodyReader)
 		if err != nil {
 			fmt.Println("Error in Set request: ", err)
 			return err
 		}
 		req.Header.Add("Content-Type", "application/json")
-		resp, err := client.Do(req)
+		resp, err = client.Do(req)
 		if err != nil {
 			fmt.Println("Request wasn't send: ", err)
 			return err
@@ -189,7 +194,12 @@ func (c Client) getRecord() (statusCode int, value node.Record) {
 	for _, server := range nodes {
 		client := &http.Client{}
 		body, err := json.Marshal(c.currentCommand)
-		req, err := http.NewRequest(get, "http://"+server.Addr+"/findRecord", bytes.NewBuffer(body))
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		bodyReader := bytes.NewReader(body)
+		req, err := http.NewRequest(get, "http://"+server.Addr+"/findRecord", bodyReader)
 		if err != nil {
 			log.Println("Error: ", err)
 			return
