@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"team01/node"
+	"time"
 )
 
 const (
@@ -20,8 +22,8 @@ const (
 )
 
 type Command struct {
-	Action string
-	Args   []string
+	Action string   `json:"command"`
+	Args   []string `json:"args"`
 }
 
 type Client struct {
@@ -109,10 +111,10 @@ func (c Client) printKnownNodes(swarm node.Swarm) {
 	}
 }
 
-func (c Client) Get() (swarm node.Swarm, err error) {
+func (c Client) getServer() (swarm node.Swarm, err error) {
 	client := &http.Client{}
 
-	resp, err := client.Get("https://" + c.host + ":" + c.port + "/getHeartBeat")
+	resp, err := client.Get("https://" + c.host + ":" + c.port + "/getServer")
 	if err != nil {
 		fmt.Println("Error from Get method: ", err)
 		return swarm, err
@@ -127,15 +129,12 @@ func (c Client) Get() (swarm node.Swarm, err error) {
 	return swarm, nil
 }
 
-func (c Client) Set() error {
+func (c Client) setRecord() error {
 	client := &http.Client{}
 
-	body := ""
-	for _, arg := range c.currentCommand.Args {
-		body = body + arg + "&"
-	}
+	body, err := json.Marshal(c.currentCommand)
 	fmt.Println("body: ", body[:len(body)-1])
-	req, err := http.NewRequest(set, "http://"+c.host+":"+c.port+"/setRequest", bytes.NewBufferString(body[:len(body)-1]))
+	req, err := http.NewRequest(set, "http://"+c.host+":"+c.port+"/setRecord", bytes.NewBuffer(body))
 	if err != nil {
 		fmt.Println("Error in Set request: ", err)
 		return err
@@ -150,8 +149,17 @@ func (c Client) Set() error {
 	return nil
 }
 
-func main() {
+func (c Client) getHeartBeat() error {
+	swarmInfo, err := c.getServer()
+	if err != nil {
+		log.Println("Error on server: ", err)
+		return err
+	}
+	c.currentSwarm = &swarmInfo
+	return nil
+}
 
+func main() {
 	// parse args and connect to node
 
 	// create a new client
@@ -160,16 +168,30 @@ func main() {
 		port: "8765",
 	}
 
-	// getHostPort() //string - "127.0.0.1", string "8765"
+	client.getHostPort() //string - "127.0.0.1", string "8765"
 
 	//first connect to server - getting info about servers of Swarm
-	swarmInfo, err := client.Get()
+	swarmInfo, err := client.getServer()
 	if err != nil {
 		log.Fatalln("Error on server")
 	}
 	client.printKnownNodes(swarmInfo)
 
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
 	// goroutine that receives heartbeats and changes nodes
+	go func(wg *sync.WaitGroup) {
+		ticker := time.Tick(time.Second)
+		for {
+			//log.Println("Отправка heartbeat сигнала нодам")
+			<-ticker
+			err := client.getHeartBeat()
+			if err != nil {
+				break
+			}
+		}
+		wg.Done()
+	}(wg)
 
 	// command execution loop
 	for {
@@ -183,12 +205,12 @@ func main() {
 			case get:
 				log.Println("Get request")
 				//get
-				swarm, err := client.Get()
-				if err != nil {
-					fmt.Println("Error in Get request: ", err)
-					return
-				}
-				client.currentSwarm = &swarm
+				statusCode := client.getRecord()
+				// if err != nil {
+				// 	fmt.Println("Error in Get request: ", err)
+				// 	return
+				// }
+				// client.currentSwarm = &swarm
 			case set:
 				log.Println("Set request")
 				//set
@@ -210,5 +232,5 @@ func main() {
 			break
 		}
 	}
-
+	wg.Wait()
 }
