@@ -15,7 +15,7 @@ const (
 	timeoutHB = 2
 )
 
-func nodeFromArgs() (*node.Node, string, string, int) {
+func nodeFromArgs() (*node.Node, string, int) {
 	var host, port, existNodeHost, existNodePort string
 	var replicationFactor int
 
@@ -54,13 +54,13 @@ func nodeFromArgs() (*node.Node, string, string, int) {
 	}
 
 	nodeEx := node.Node{
-		Host:         host,
-		Port:         port,
+		Addr:         fmt.Sprintf("%s:%s", host, port),
 		RecordsCount: 0,
 		DB:           make(map[string]*node.Record),
 	}
 
-	return &nodeEx, existNodeHost, existNodePort, replicationFactor
+	ExistAddr := fmt.Sprintf("%s:%s", existNodeHost, existNodePort)
+	return &nodeEx, ExistAddr, replicationFactor
 }
 
 func PortIsCorrect(port string) bool {
@@ -75,25 +75,26 @@ func PortIsCorrect(port string) bool {
 
 func main() {
 
-	thisNode, existNodeHost, existNodePort, replicationFactor := nodeFromArgs()
-	log.Printf("Запуск ноды на %s:%s\n", thisNode.Host, thisNode.Port)
+	thisNode, existAddr, replicationFactor := nodeFromArgs()
+	log.Printf("Запуск ноды на %s\n", thisNode.Addr)
 
 	var swarm *node.Swarm
-	if existNodeHost != "" {
-		log.Printf("Получаем информацию о нодах из ноды %s:%s\n", existNodeHost, existNodePort)
+	if existAddr != ":" {
+		log.Printf("Получаем информацию о нодах из ноды %s\n", existAddr)
 		var err error
-		swarm, err = thisNode.SendHeartBeat(existNodeHost, existNodePort)
+		swarm = thisNode.SendGetServer(existAddr)
+		swarm.ThisNode = thisNode
 		if err != nil {
 			log.Fatal(err)
 		}
 	} else {
-		log.Printf("Создаем новый рой нод, первая нода (текущая) %s:%s\n", thisNode.Host, thisNode.Port)
+		log.Printf("Создаем новый рой нод, первая нода (текущая) %s\n", thisNode.Addr)
 		swarm = &node.Swarm{
 			ThisNode:          thisNode,
 			Nodes:             make(map[string]*node.Node),
 			ReplicationFactor: replicationFactor,
 		}
-		swarm.Nodes[thisNode.Host+":"+thisNode.Port] = thisNode
+		swarm.Nodes[thisNode.Addr] = thisNode
 	}
 
 	wg := new(sync.WaitGroup)
@@ -131,11 +132,11 @@ func main() {
 				break
 			}
 			for k, v := range swarm.Nodes {
-				if k == thisNode.Host+":"+thisNode.Port {
+				if k == thisNode.Addr {
 					continue
 				}
 				if time.Now().Unix()-v.HeartBeat.Unix() > int64(time.Second*timeoutHB) {
-					log.Printf("Удаление ноды %s:%s, так как вовремя не пришел heartbeat сигнал от неё\n", v.Host, v.Port)
+					log.Printf("Удаление ноды %s, так как вовремя не пришел heartbeat сигнал от неё\n", v.Addr)
 					swarm.Mu.Lock()
 					delete(swarm.Nodes, k)
 					swarm.Mu.Unlock()
