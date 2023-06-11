@@ -15,7 +15,7 @@ const (
 	timeoutHB = 2
 )
 
-func nodeFromArgs() (*node.Node, string, string, int) {
+func nodeFromArgs() (*node.Node, string, int) {
 	var host, port, existNodeHost, existNodePort string
 	var replicationFactor int
 
@@ -54,13 +54,13 @@ func nodeFromArgs() (*node.Node, string, string, int) {
 	}
 
 	nodeEx := node.Node{
-		Host:         host,
-		Port:         port,
+		Addr:         fmt.Sprintf("%s:%s", host, port),
 		RecordsCount: 0,
 		DB:           make(map[string]*node.Record),
 	}
 
-	return &nodeEx, existNodeHost, existNodePort, replicationFactor
+	ExistAddr := fmt.Sprintf("%s:%s", existNodeHost, existNodePort)
+	return &nodeEx, ExistAddr, replicationFactor
 }
 
 func PortIsCorrect(port string) bool {
@@ -75,25 +75,35 @@ func PortIsCorrect(port string) bool {
 
 func main() {
 
-	thisNode, existNodeHost, existNodePort, replicationFactor := nodeFromArgs()
-	log.Printf("Запуск ноды на %s:%s\n", thisNode.Host, thisNode.Port)
+	thisNode, existAddr, replicationFactor := nodeFromArgs()
+	log.Printf("Запуск ноды на %s\n", thisNode.Addr)
 
 	var swarm *node.Swarm
-	if existNodeHost != "" {
-		log.Printf("Получаем информацию о нодах из ноды %s:%s\n", existNodeHost, existNodePort)
-		var err error
-		swarm, err = thisNode.SendHeartBeat(existNodeHost, existNodePort)
-		if err != nil {
-			log.Fatal(err)
+	if existAddr != ":" {
+		log.Printf("Получаем информацию о нодах из ноды %s\n", existAddr)
+		swarm = thisNode.SendHeartBeat(existAddr)
+		if swarm == nil {
+			log.Fatal("Existing node is not available")
 		}
+		swarm.ThisNode = thisNode
+		swarm.Nodes[thisNode.Addr] = thisNode
+
+		if swarm.ReplicationFactor != replicationFactor {
+			errMsg := fmt.Sprintf("У ноды %s не совпадает replication factor (нода:%d-рой:%d)\n",
+				thisNode.Addr,
+				replicationFactor,
+				swarm.ReplicationFactor)
+			log.Fatal(errMsg)
+		}
+
 	} else {
-		log.Printf("Создаем новый рой нод, первая нода (текущая) %s:%s\n", thisNode.Host, thisNode.Port)
+		log.Printf("Создаем новый рой нод, первая нода (текущая) %s\n", thisNode.Addr)
 		swarm = &node.Swarm{
 			ThisNode:          thisNode,
 			Nodes:             make(map[string]*node.Node),
 			ReplicationFactor: replicationFactor,
 		}
-		swarm.Nodes[thisNode.Host+":"+thisNode.Port] = thisNode
+		swarm.Nodes[thisNode.Addr] = thisNode
 	}
 
 	wg := new(sync.WaitGroup)
@@ -110,12 +120,15 @@ func main() {
 	go func(wg *sync.WaitGroup) {
 		ticker := time.Tick(time.Second)
 		for {
-			//log.Printf("Отправка heartbeat сигнала нодам (%d)\n", len(swarm.Nodes))
 			<-ticker
-			err := swarm.SendHeartbeatToAllNodes()
-			if err != nil {
+			if len(swarm.Nodes) == 1 {
+				continue
+			}
+			if len(swarm.Nodes) == 0 {
 				break
 			}
+			log.Printf("Отправка heartbeat сигнала нодам (%d)\n", len(swarm.Nodes))
+			swarm.SendHeartbeatToAllNodes()
 		}
 		wg.Done()
 	}(wg)
@@ -125,25 +138,27 @@ func main() {
 	go func() {
 		ticker := time.Tick(time.Second * timeoutHB)
 		for {
-			//log.Printf("Проверка heartbeat сигналов (%d)\n", len(swarm.Nodes))
 			<-ticker
+			if len(swarm.Nodes) == 1 {
+				continue
+			}
 			if len(swarm.Nodes) == 0 {
 				break
 			}
+			log.Printf("Проверка heartbeat сигналов (%d)\n", len(swarm.Nodes))
+			swarm.Mu.Lock()
 			for k, v := range swarm.Nodes {
-				if k == thisNode.Host+":"+thisNode.Port {
+				if k == thisNode.Addr {
 					continue
 				}
-				if time.Now().Unix()-v.HeartBeat.Unix() > int64(time.Second*timeoutHB) {
-					log.Printf("Удаление ноды %s:%s, так как вовремя не пришел heartbeat сигнал от неё\n", v.Host, v.Port)
-					swarm.Mu.Lock()
+				if time.Now().UnixNano()-v.HeartBeat.UnixNano() > int64(time.Second*timeoutHB) {
+					log.Printf("Удаление ноды %s, так как вовремя не пришел heartbeat сигнал от неё\n", v.Addr)
 					delete(swarm.Nodes, k)
-					swarm.Mu.Unlock()
 				}
 			}
+			swarm.Mu.Unlock()
 		}
 		wg.Done()
 	}()
 	wg.Wait()
-
 }
