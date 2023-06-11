@@ -24,9 +24,10 @@ type Command struct {
 }
 
 type Client struct {
-	host         string
-	port         string
-	currentSwarm *node.Swarm
+	host           string
+	port           string
+	currentSwarm   *node.Swarm
+	currentCommand Command
 }
 
 func getCommand() (isInputCorrect, stopReading bool, command *Command) {
@@ -108,10 +109,10 @@ func (c Client) printKnownNodes(swarm node.Swarm) {
 	}
 }
 
-func (c Client) Get(urlS string) (swarm node.Swarm, err error) {
+func (c Client) Get() (swarm node.Swarm, err error) {
 	client := &http.Client{}
 
-	resp, err := client.Get("https://" + c.host + ":" + c.port + "/getSwarm")
+	resp, err := client.Get("https://" + c.host + ":" + c.port + "/getHeartBeat")
 	if err != nil {
 		fmt.Println("Error from Get method: ", err)
 		return swarm, err
@@ -126,6 +127,8 @@ func (c Client) Get(urlS string) (swarm node.Swarm, err error) {
 	return swarm, nil
 }
 
+func (c Client) Set() {}
+
 func main() {
 
 	// parse args and connect to node
@@ -133,10 +136,10 @@ func main() {
 	// create a new client
 	client := Client{}
 
-	urlS := getUrl() //string - "https://127.0.0.1:8765/getSwarm"
+	getHostPort() //string - "127.0.0.1", string "8765"
 
 	//first connect to server - getting info about servers of Swarm
-	swarmInfo, err := client.Get(urlS)
+	swarmInfo, err := client.Get()
 	if err != nil {
 		log.Fatal()
 	}
@@ -150,6 +153,23 @@ func main() {
 		if isInputCorrect {
 			// command execute
 			fmt.Println(command)
+			switch client.currentCommand.Action {
+			case get:
+				//get
+				swarm, err := client.Get()
+				if err != nil {
+					fmt.Println("Error in Get request")
+					return
+				}
+				client.currentSwarm = &swarm
+			case set:
+				//set
+			case del:
+				//delete
+			default:
+				fmt.Println("Unknown command, you can use only GET, SET, DELETE methods")
+				break
+			}
 		}
 		if stopReading {
 			fmt.Printf("\n")
