@@ -61,7 +61,7 @@ func getCommand() (isInputCorrect, stopReading bool, command *Command) {
 		if err != io.EOF {
 			_, err := fmt.Fprint(os.Stderr, "Empty value.\n")
 			if err != nil {
-				return
+				return false, true, nil
 			}
 		}
 		isInputCorrect = false
@@ -70,24 +70,31 @@ func getCommand() (isInputCorrect, stopReading bool, command *Command) {
 		if len(stringsFields) < 2 {
 			_, err = fmt.Fprint(os.Stderr, "Wrong command value.\n")
 			if err != nil {
-				return
+				return false, true, nil
 			}
 		} else {
 			if stringsFields[0] == get || stringsFields[0] == set || stringsFields[0] == del {
 				args := stringsFields[1:]
 
+				// fmt.Println("len args: ", len(args))
+				// fmt.Println("args: ")
+				// for _, val := range args {
+				// 	fmt.Println(val)
+				// }
+				// fmt.Println()
 				if (stringsFields[0] == get || stringsFields[0] == del) && len(args) != 1 {
-					_, err = fmt.Fprint(os.Stderr, "Wrong command arguments count.\n")
+					_, err = fmt.Fprint(os.Stderr, "Wrong command arguments count1.\n")
 					if err != nil {
-						return
+						return false, true, nil
 					}
-				} else if stringsFields[0] == set && len(args) != 2 {
-					_, err = fmt.Fprint(os.Stderr, "Wrong command arguments count.\n")
+				} else if stringsFields[0] == set && len(args) != 5 {
+					_, err = fmt.Fprint(os.Stderr, "Wrong command arguments count2.\n")
 					if err != nil {
-						return
+						return false, true, nil
 					}
 				} else if !isUUID4(args[0]) {
 					_, err = fmt.Fprint(os.Stderr, "Error: Key is not a proper UUID4\n")
+					return false, true, nil
 				} else {
 					command = &Command{
 						Action: stringsFields[0],
@@ -97,7 +104,7 @@ func getCommand() (isInputCorrect, stopReading bool, command *Command) {
 			} else {
 				_, err = fmt.Fprint(os.Stderr, "Unsupported command.\n")
 				if err != nil {
-					return
+					return false, true, nil
 				}
 			}
 		}
@@ -142,7 +149,7 @@ func (c Client) setRecord() error {
 
 	for _, server := range nodes {
 		getStr := "{\"command\": \"GET\", \"args\": [\"" + c.currentCommand.Args[0] + "\"]}"
-		// fmt.Println("getStr: ", getStr)
+		fmt.Println("getStr: ", getStr)
 		// statusCode, _ := c.getRecord()
 		req, err := http.NewRequest(get, "http://"+(*server).Addr+"/findRecord", bytes.NewBufferString(getStr))
 		if err != nil {
@@ -221,7 +228,7 @@ func (c Client) getRecord() (statusCode int, value node.Record) {
 			json.Unmarshal(body, &value)
 			break
 		}
-		fmt.Println("value json: ", value)
+		// fmt.Println("value json: ", value)
 	}
 	if statusCode == 0 {
 		value.Value = "Not found"
@@ -308,10 +315,12 @@ func main() {
 	for {
 		isInputCorrect, stopReading, command := getCommand()
 		// fmt.Println("main | command: ", command.Action)
+		fmt.Println("isInputCorrect: ", isInputCorrect)
+		// SET 0d5d3807-5fbf-4228-a657-5a091c4e497f '{"name": "Chapayev's Mustache comb"}'
 		if isInputCorrect {
 			// command execute
+			fmt.Println("command: ", (*command).Action)
 			client.currentCommand = *command
-
 			switch client.currentCommand.Action {
 			case get:
 				log.Println("Get request")
@@ -322,7 +331,7 @@ func main() {
 					fmt.Println(value)
 				case 404:
 					fmt.Println("Record not found")
-					return
+					continue
 				}
 			case set:
 				log.Println("Set request")
@@ -330,14 +339,14 @@ func main() {
 				err := client.setRecord()
 				if err != nil {
 					fmt.Println("Error in Set request: ", err)
-					return
+					continue
 				}
 			case del:
 				log.Println("Delete request")
 				//delete
 			default:
 				fmt.Println("Unknown command, you can use only GET, SET, DELETE methods")
-				break
+				continue
 			}
 		}
 		if stopReading {
