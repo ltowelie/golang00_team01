@@ -175,7 +175,6 @@ func (c Client) setRecord() error {
 			for i, val := range nodesStruct {
 				if i < 2 {
 					setNodes = append(setNodes, val.key)
-					fmt.Println("val.value.RecordsCount: ", val.value.RecordsCount)
 				}
 			}
 		}
@@ -210,11 +209,14 @@ func (c Client) setRecord() error {
 
 func (c *Client) getHeartBeat() error {
 	swarmInfo, err := c.getServer()
+	if len(swarmInfo.Nodes) < len(c.currentSwarm.Nodes) && len(swarmInfo.Nodes) < swarmInfo.ReplicationFactor{
+	fmt.Println("WARNING: cluster size (1) is smaller than a replication factor (2)!")
+	}
 	if err != nil {
 		addr := c.host + ":" + c.port
 		c.Mu.Lock()
 		delete(c.currentSwarm.Nodes, addr)
-		c.Mu.Unlock()
+		c.Mu.Unlock() 
 		for key, _ := range c.currentSwarm.Nodes {
 			arr := strings.Split(key, ":")
 			if c.host == arr[0] && c.port != arr[1] {
@@ -224,9 +226,6 @@ func (c *Client) getHeartBeat() error {
 				c.Mu.Unlock()
 				fmt.Printf("Reconnected to a database of Warehouse 13 at %s:%s\n", c.host, c.port)
 				c.printKnownNodes()
-				if len(c.currentSwarm.Nodes) < 2 {
-					fmt.Println("WARNING: cluster size (1) is smaller than a replication factor (2)!")
-				}
 				break
 			}
 		}
