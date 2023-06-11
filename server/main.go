@@ -81,7 +81,10 @@ func main() {
 	var swarm *node.Swarm
 	if existAddr != ":" {
 		log.Printf("Получаем информацию о нодах из ноды %s\n", existAddr)
-		swarm = thisNode.SendGetServer(existAddr)
+		swarm = thisNode.SendHeartBeat(existAddr)
+		if swarm == nil {
+			log.Fatal("Existing node is not available")
+		}
 		swarm.ThisNode = thisNode
 		swarm.Nodes[thisNode.Addr] = thisNode
 
@@ -121,11 +124,11 @@ func main() {
 			if len(swarm.Nodes) == 1 {
 				continue
 			}
-			log.Printf("Отправка heartbeat сигнала нодам (%d)\n", len(swarm.Nodes))
-			err := swarm.SendHeartbeatToAllNodes()
-			if err != nil {
+			if len(swarm.Nodes) == 0 {
 				break
 			}
+			log.Printf("Отправка heartbeat сигнала нодам (%d)\n", len(swarm.Nodes))
+			swarm.SendHeartbeatToAllNodes()
 		}
 		wg.Done()
 	}(wg)
@@ -139,10 +142,10 @@ func main() {
 			if len(swarm.Nodes) == 1 {
 				continue
 			}
-			log.Printf("Проверка heartbeat сигналов (%d)\n", len(swarm.Nodes))
 			if len(swarm.Nodes) == 0 {
 				break
 			}
+			log.Printf("Проверка heartbeat сигналов (%d)\n", len(swarm.Nodes))
 			swarm.Mu.Lock()
 			for k, v := range swarm.Nodes {
 				if k == thisNode.Addr {
