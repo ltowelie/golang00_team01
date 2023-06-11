@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -33,7 +34,6 @@ type Client struct {
 func getCommand() (isInputCorrect, stopReading bool, command *Command) {
 
 	command = nil
-
 	stopReading = false
 	isInputCorrect = true
 	userInput := bufio.NewReader(os.Stdin)
@@ -127,21 +127,45 @@ func (c Client) Get() (swarm node.Swarm, err error) {
 	return swarm, nil
 }
 
-func (c Client) Set() {}
+func (c Client) Set() error {
+	client := &http.Client{}
+
+	body := ""
+	for _, arg := range c.currentCommand.Args {
+		body = body + arg + "&"
+	}
+	fmt.Println("body: ", body[:len(body)-1])
+	req, err := http.NewRequest(set, "http://"+c.host+":"+c.port+"/setRequest", bytes.NewBufferString(body[:len(body)-1]))
+	if err != nil {
+		fmt.Println("Error in Set request: ", err)
+		return err
+	}
+	req.Header.Add("Accept", "text/html")
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Println("Error in Set request: ", err)
+		return err
+	}
+	defer resp.Body.Close()
+	return nil
+}
 
 func main() {
 
 	// parse args and connect to node
 
 	// create a new client
-	client := Client{}
+	client := Client{
+		host: "127.0.0.1",
+		port: "8765",
+	}
 
-	getHostPort() //string - "127.0.0.1", string "8765"
+	// getHostPort() //string - "127.0.0.1", string "8765"
 
 	//first connect to server - getting info about servers of Swarm
 	swarmInfo, err := client.Get()
 	if err != nil {
-		log.Fatal()
+		log.Fatalln("Error on server")
 	}
 	client.printKnownNodes(swarmInfo)
 
@@ -150,21 +174,31 @@ func main() {
 	// command execution loop
 	for {
 		isInputCorrect, stopReading, command := getCommand()
+		fmt.Println("main | command: ", command.Action)
 		if isInputCorrect {
 			// command execute
-			fmt.Println(command)
+			client.currentCommand = *command
+
 			switch client.currentCommand.Action {
 			case get:
+				log.Println("Get request")
 				//get
 				swarm, err := client.Get()
 				if err != nil {
-					fmt.Println("Error in Get request")
+					fmt.Println("Error in Get request: ", err)
 					return
 				}
 				client.currentSwarm = &swarm
 			case set:
+				log.Println("Set request")
 				//set
+				err := client.Set()
+				if err != nil {
+					fmt.Println("Error in Set request: ", err)
+					return
+				}
 			case del:
+				log.Println("Delete request")
 				//delete
 			default:
 				fmt.Println("Unknown command, you can use only GET, SET, DELETE methods")
