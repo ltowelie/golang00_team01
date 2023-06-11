@@ -109,6 +109,7 @@ func getUrl() (urlS string) {
 }
 
 func (c Client) printKnownNodes(swarm node.Swarm) {
+	fmt.Println(swarm)
 	fmt.Printf("Connected to a database of Warehouse 13 at %s\n", swarm.ThisNode.Addr)
 	fmt.Println("Known nodes:")
 	for _, val := range swarm.Nodes {
@@ -126,6 +127,7 @@ func (c Client) getServer() (swarm node.Swarm, err error) {
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
+	fmt.Println(string(body))
 	if err != nil {
 		fmt.Println("Error from getServer: ", err)
 		return swarm, err
@@ -258,6 +260,7 @@ func main() {
 		log.Fatalln("Error on server")
 	}
 	client.printKnownNodes(swarmInfo)
+	client.currentSwarm = &swarmInfo
 
 	wg := new(sync.WaitGroup)
 	wg.Add(1)
