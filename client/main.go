@@ -104,10 +104,10 @@ func getUrl() (urlS string) {
 }
 
 func (c Client) printKnownNodes(swarm node.Swarm) {
-	fmt.Println("Connected to a database of Warehouse 13 at ", c.host, ":", c.port)
+	fmt.Printf("Connected to a database of Warehouse 13 at %s\n", swarm.ThisNode.Addr)
 	fmt.Println("Known nodes:")
 	for _, val := range swarm.Nodes {
-		fmt.Printf("%s:%s\n", val.Host, val.Port)
+		fmt.Printf("%v\n", val.Addr)
 	}
 }
 
@@ -163,7 +163,7 @@ func (c Client) getRecord() (statusCode int, value node.Record) {
 	for _, server := range c.currentSwarm.Nodes {
 		client := &http.Client{}
 		body, err := json.Marshal(c.currentCommand)
-		req, err := http.NewRequest(get, "http://"+server.Host+":"+server.Port+"/findRecord", bytes.NewBuffer(body))
+		req, err := http.NewRequest(get, "http://"+server.Addr+"/findRecord", bytes.NewBuffer(body))
 		if err != nil {
 			log.Println("Error: ", err)
 			return
