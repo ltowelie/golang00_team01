@@ -107,29 +107,32 @@ func (s *Swarm) HandleHeartBeat(w http.ResponseWriter, r *http.Request) {
 		_, err = fmt.Fprintf(os.Stderr, "error encoding swarm in heartbeat: %s\n", err)
 	}
 
-	var node *Node
+	switch r.URL.Path {
+	case "/heartBeat":
+		var node *Node
 
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		_, err = fmt.Fprintf(os.Stderr, "error reading request body: %s\n", err)
+		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			log.Printf("%s\n", err)
+			_, err = fmt.Fprintf(os.Stderr, "error reading request body: %s\n", err)
+			if err != nil {
+				log.Printf("%s\n", err)
+			}
 		}
-	}
-	err = json.Unmarshal(body, &node)
+		err = json.Unmarshal(body, &node)
 
-	log.Printf("Got heartbeat signal from %s\n", node.Addr)
+		log.Printf("Got heartbeat signal from %s\n", node.Addr)
 
-	if err != nil {
-		_, err = fmt.Fprintf(os.Stderr, "error unmarshalling heartbeat signal node: %s\n", err)
 		if err != nil {
-			log.Printf("%s\n", err)
+			_, err = fmt.Fprintf(os.Stderr, "error unmarshalling heartbeat signal node: %s\n", err)
+			if err != nil {
+				log.Printf("%s\n", err)
+			}
 		}
+		s.Mu.Lock()
+		s.Nodes[node.Addr] = node
+		s.Nodes[node.Addr].HeartBeat = time.Now()
+		s.Mu.Unlock()
 	}
-	s.Mu.Lock()
-	s.Nodes[node.Addr] = node
-	s.Nodes[node.Addr].HeartBeat = time.Now()
-	s.Mu.Unlock()
 }
 
 func successFind(w http.ResponseWriter, val *Record) {
