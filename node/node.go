@@ -115,25 +115,15 @@ func (n Node) SendHeartBeat(host, port string) (*Swarm, error) {
 	return &swarm, nil
 }
 
-func (n Node) HandleHeartBeat(w http.ResponseWriter, r *http.Request) {
-	var elem *Swarm
-	log.Printf("Got heartbeat signal")
+func (s *Swarm) HandleHeartBeatRequest(w http.ResponseWriter, r *http.Request) {
 
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		_, err = fmt.Fprintf(os.Stderr, "error reading request body: %s\n", err)
-		if err != nil {
-			log.Printf("%s\n", err)
-		}
-	}
-	err = json.Unmarshal(body, &elem)
-	if err != nil {
-		_, err = fmt.Fprintf(os.Stderr, "error unmarshalling heartbeat signal node: %s\n", err)
-		if err != nil {
-			log.Printf("%s\n", err)
-		}
-	}
+	log.Printf("Got heartbeat signal request")
 
+	w.Header().Set("Content-Type", "application/json")
+	err := json.NewEncoder(w).Encode(s)
+	if err != nil {
+		_, err = fmt.Fprintf(os.Stderr, "error encoding swarm: %s\n", err)
+	}
 }
 
 func (s *Swarm) HandleHeartBeat(w http.ResponseWriter, r *http.Request) {
@@ -165,7 +155,7 @@ func (s *Swarm) HandleHeartBeat(w http.ResponseWriter, r *http.Request) {
 func (s *Swarm) ServeRequests() {
 
 	http.HandleFunc("/heartBeat", s.HandleHeartBeat)
-	http.HandleFunc("/getHeartBeat", s.ThisNode.HandleHeartBeat)
+	http.HandleFunc("/getHeartBeat", s.HandleHeartBeatRequest)
 	err := http.ListenAndServe(s.ThisNode.Host+":"+s.ThisNode.Port, nil)
 	if err != nil {
 		log.Fatal(err)
