@@ -137,7 +137,7 @@ func (c Client) getServer() (swarm node.Swarm, err error) {
 	return swarm, nil
 }
 
-func (c Client) setRecord() error {
+func (c *Client) setRecord() error {
 	c.Mu.Lock()
 	nodes := c.currentSwarm.Nodes
 	c.Mu.Unlock()
@@ -236,7 +236,7 @@ func (c *Client) getHeartBeat() error {
 	return nil
 }
 
-func (c Client) getRecord() (statusCode int, value node.Record) {
+func (c *Client) getRecord() (statusCode int, value node.Record) {
 	c.Mu.Lock()
 	nodes := c.currentSwarm.Nodes
 	c.Mu.Unlock()
@@ -325,7 +325,7 @@ func isUUID4(str string) bool {
 	return true
 }
 
-func (c Client) delRecord() {
+func (c *Client) delRecord() {
 	count := 0
 	c.Mu.Lock()
 	nodes := c.currentSwarm.Nodes
